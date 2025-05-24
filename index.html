@@ -5,215 +5,226 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Flappy Coin</title>
     <style>
-        * {
+        /* Красивый фон, центрирование canvas */
+        body, html {
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
-        }
-
-        body, html {
-            height: 100%;
-            background: linear-gradient(135deg, #6b8dd6, #b1c9f8);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: #333;
+            overflow: hidden;
+            background: linear-gradient(135deg, #87ceeb 0%, #b2f2bb 100%);
             display: flex;
             justify-content: center;
             align-items: center;
-            user-select: none;
-        }
-
-        #game-container {
-            background: #eef3fc;
-            box-shadow: 0 8px 30px rgba(50, 50, 93, 0.1);
-            border-radius: 16px;
-            padding: 20px;
-            text-align: center;
+            height: 100vh;
+            width: 100vw;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
         }
 
         canvas {
             display: block;
-            background: linear-gradient(to bottom, #8ed0ff 0%, #4a90e2 100%);
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            margin: 0 auto 12px;
+            background: #a3d9a5;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
         }
-
-        #score {
-            font-weight: 700;
-            font-size: 28px;
-            color: #2c3e50;
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.15);
-            margin-bottom: 12px;
-        }
-
-        #instructions {
-            font-size: 14px;
-            color: #6b7a8f;
-            margin-bottom: 8px;
-            user-select: none;
-        }
-
-        #restart-btn {
-            background: #4a90e2;
-            border: none;
-            border-radius: 8px;
-            color: white;
-            font-size: 16px;
-            font-weight: 600;
-            padding: 10px 24px;
-            cursor: pointer;
-            box-shadow: 0 6px 10px rgba(74, 144, 226, 0.4);
-            transition: background-color 0.3s ease;
-        }
-
-            #restart-btn:hover {
-                background: #357abd;
-            }
-
-            #restart-btn:active {
-                background: #2c5c95;
-            }
     </style>
 </head>
 <body>
-    <div id="game-container">
-        <div id="score">0</div>
-        <canvas id="game" width="320" height="480"></canvas>
-        <div id="instructions">Нажмите пробел или кликните для прыжка</div>
-        <button id="restart-btn" style="display:none;">Играть снова</button>
-    </div>
-
+    <canvas id="game"></canvas>
     <script>
-        const canvas = document.getElementById('game');
-        const ctx = canvas.getContext('2d');
+        (() => {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
 
-        const pipeWidth = 50;
-        const gap = 130;
+            // Сделать canvas размером во весь экран (учитываем dpr)
+            function resize() {
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = window.innerWidth * dpr;
+                canvas.height = window.innerHeight * dpr;
+                canvas.style.width = window.innerWidth + 'px';
+                canvas.style.height = window.innerHeight + 'px';
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(dpr, dpr);
+            }
+            resize();
+            window.addEventListener('resize', resize);
 
-        let frames = 0;
-        let pipes = [];
-        let score = 0;
+            // Настройки игры
+            const gravity = 1200; // пикселей в секунду^2 (ускорение падения)
+            const jumpVelocity = -450; // скорость прыжка (отрицательная — вверх)
+            const pipeSpeed = 280; // пикселей в секунду (скорость труб)
+            const pipeGap = 180; // промежуток между трубами по вертикали
+            const pipeWidth = 60;
+            const pipeInterval = 2000; // миллисекунд между трубами
 
-        const gravity = 0.1;
-        const jump = -3.5;
-        const pipeSpeed = 1;
+            // Монетка (птица) параметры
+            const coinRadius = 20;
+            const coinX = 100; // горизонтальная позиция монеты — не меняется
 
-        const coin = {
-            x: 60,
-            y: 200,
-            radius: 15,
-            velocity: 0,
-            flap() {
-                this.velocity = jump;
-            },
-            draw() {
-                // жёлтый круг
+            // Состояние игры
+            let coinY = canvas.height / (window.devicePixelRatio || 1) / 2;
+            let coinVelocity = 0;
+            let pipes = [];
+            let lastPipeTime = 0;
+            let lastFrameTime = 0;
+            let gameOver = false;
+            let score = 0;
+
+            // Управление (клик, пробел, тач)
+            function jump() {
+                if (gameOver) {
+                    resetGame();
+                    return;
+                }
+                coinVelocity = jumpVelocity;
+            }
+            window.addEventListener('keydown', e => { if (e.code === 'Space') jump(); });
+            window.addEventListener('mousedown', jump);
+            window.addEventListener('touchstart', e => { e.preventDefault(); jump(); }, { passive: false });
+
+            // Сброс игры
+            function resetGame() {
+                coinY = canvas.height / (window.devicePixelRatio || 1) / 2;
+                coinVelocity = 0;
+                pipes = [];
+                lastPipeTime = 0;
+                score = 0;
+                gameOver = false;
+            }
+
+            // Создать новую трубу (верх и низ)
+            function createPipe() {
+                const canvasH = canvas.height / (window.devicePixelRatio || 1);
+                // Высота верхней трубы: от 50px до canvasH - pipeGap - 50
+                const topHeight = 50 + Math.random() * (canvasH - pipeGap - 100);
+                pipes.push({ x: canvas.width / (window.devicePixelRatio || 1), topHeight });
+            }
+
+            // Проверка пересечения круга (монеты) с прямоугольником (трубой)
+            function circleRectCollision(cx, cy, radius, rx, ry, rw, rh) {
+                // Найти ближайшую точку прямоугольника к центру круга
+                const nearestX = Math.max(rx, Math.min(cx, rx + rw));
+                const nearestY = Math.max(ry, Math.min(cy, ry + rh));
+                const dx = cx - nearestX;
+                const dy = cy - nearestY;
+                return (dx * dx + dy * dy) < radius * radius;
+            }
+
+            // Отрисовка монетки (желтый круг с $)
+            function drawCoin(x, y) {
+                ctx.fillStyle = '#f7d84b';
                 ctx.beginPath();
-                ctx.fillStyle = '#f1c40f';
-                ctx.shadowColor = '#d4ac0d';
-                ctx.shadowBlur = 10;
-                ctx.arc(this.x + this.radius, this.y + this.radius, this.radius, 0, 2 * Math.PI);
+                ctx.shadowColor = 'rgba(255, 255, 0, 0.6)';
+                ctx.shadowBlur = 15;
+                ctx.arc(x, y, coinRadius, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.closePath();
+                ctx.shadowBlur = 0;
 
-                // знак доллара посередине
-                ctx.font = '20px Arial';
-                ctx.fillStyle = '#b38f00';
+                ctx.fillStyle = '#b38600';
+                ctx.font = '28px Arial, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText('$', this.x + this.radius, this.y + this.radius + 1);
-
-                ctx.shadowBlur = 0; // сброс тени
-            }
-        };
-
-        function createPipe() {
-            const top = Math.floor(Math.random() * (canvas.height - gap - 80)) + 40;
-            pipes.push({ x: canvas.width, top });
-        }
-
-        function resetGame() {
-            pipes = [];
-            score = 0;
-            coin.y = 200;
-            coin.velocity = 0;
-            frames = 0;
-            document.getElementById('score').innerText = score;
-            document.getElementById('restart-btn').style.display = 'none';
-            gameLoop();
-        }
-
-        function gameLoop() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            frames++;
-            coin.velocity += gravity;
-            coin.y += coin.velocity;
-
-            if (coin.y + coin.radius * 2 > canvas.height || coin.y < 0) {
-                endGame();
-                return;
+                ctx.fillText('$', x, y + 1);
             }
 
-            if (frames % 250 === 0) {
-                createPipe();
-            }
-
-            for (let i = 0; i < pipes.length; i++) {
-                pipes[i].x -= pipeSpeed;
+            // Отрисовка трубы зеленого оттенка
+            function drawPipe(x, topHeight, canvasH) {
+                const greenTop = '#2e7d32';
+                const greenBottom = '#4caf50';
 
                 // Верхняя труба
-                ctx.fillStyle = '#3bafda';
-                ctx.fillRect(pipes[i].x, 0, pipeWidth, pipes[i].top);
+                ctx.fillStyle = greenTop;
+                ctx.fillRect(x, 0, pipeWidth, topHeight);
 
                 // Нижняя труба
-                ctx.fillRect(pipes[i].x, pipes[i].top + gap, pipeWidth, canvas.height);
+                ctx.fillStyle = greenBottom;
+                ctx.fillRect(x, topHeight + pipeGap, pipeWidth, canvasH - (topHeight + pipeGap));
+            }
 
-                // Проверка столкновений с монеткой (круг)
-                if (
-                    coin.x + coin.radius * 2 > pipes[i].x &&
-                    coin.x < pipes[i].x + pipeWidth &&
-                    (coin.y < pipes[i].top || coin.y + coin.radius * 2 > pipes[i].top + gap)
-                ) {
-                    endGame();
+            // Отрисовка счета
+            function drawScore() {
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 36px Segoe UI, Tahoma, Geneva, Verdana, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'black';
+                ctx.shadowBlur = 5;
+                ctx.fillText(`Score: ${score}`, canvas.width / (window.devicePixelRatio || 1) / 2, 50);
+                ctx.shadowBlur = 0;
+            }
+
+            // Основной игровой цикл
+            function gameLoop(timestamp = 0) {
+                if (!lastFrameTime) lastFrameTime = timestamp;
+                const deltaTime = (timestamp - lastFrameTime) / 1000; // в секундах
+                lastFrameTime = timestamp;
+
+                if (gameOver) {
+                    // Отрисовать "Game Over" и ждать рестарт
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    drawScore();
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.font = 'bold 72px Segoe UI, Tahoma, Geneva, Verdana, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Game Over', canvas.width / (window.devicePixelRatio || 1) / 2, canvas.height / (window.devicePixelRatio || 1) / 2);
+                    ctx.font = '24px Segoe UI, Tahoma, Geneva, Verdana, sans-serif';
+                    ctx.fillText('Click or press Space to restart', canvas.width / (window.devicePixelRatio || 1) / 2, canvas.height / (window.devicePixelRatio || 1) / 2 + 50);
                     return;
                 }
 
-                // Подсчёт очков
-                if (pipes[i].x + pipeWidth === coin.x) {
-                    score++;
-                    document.getElementById('score').innerText = score;
+                // Обновление позиции монеты
+                coinVelocity += gravity * deltaTime;
+                coinY += coinVelocity * deltaTime;
+
+                const canvasH = canvas.height / (window.devicePixelRatio || 1);
+
+                // Создание труб по времени
+                if (timestamp - lastPipeTime > pipeInterval) {
+                    createPipe();
+                    lastPipeTime = timestamp;
                 }
+
+                // Обновление положения труб и проверка столкновений
+                pipes.forEach(pipe => {
+                    pipe.x -= pipeSpeed * deltaTime;
+                });
+
+                // Удаление труб, вышедших за экран слева
+                if (pipes.length && pipes[0].x + pipeWidth < 0) {
+                    pipes.shift();
+                    score++;
+                }
+
+                // Проверка столкновений с трубами
+                for (let pipe of pipes) {
+                    if (
+                        circleRectCollision(coinX, coinY, coinRadius, pipe.x, 0, pipeWidth, pipe.topHeight) ||
+                        circleRectCollision(coinX, coinY, coinRadius, pipe.x, pipe.topHeight + pipeGap, pipeWidth, canvasH - (pipe.topHeight + pipeGap))
+                    ) {
+                        gameOver = true;
+                    }
+                }
+
+                // Проверка столкновения с землей и потолком
+                if (coinY + coinRadius > canvasH || coinY - coinRadius < 0) {
+                    gameOver = true;
+                }
+
+                // Отрисовка
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Трубы
+                pipes.forEach(pipe => drawPipe(pipe.x, pipe.topHeight, canvasH));
+
+                // Монетка
+                drawCoin(coinX, coinY);
+
+                // Счет
+                drawScore();
+
+                requestAnimationFrame(gameLoop);
             }
 
-            if (pipes.length && pipes[0].x + pipeWidth < 0) {
-                pipes.shift();
-            }
-
-            coin.draw();
-
-            requestAnimationFrame(gameLoop);
-        }
-
-        function endGame() {
-            document.getElementById('restart-btn').style.display = 'inline-block';
-        }
-
-        document.addEventListener('keydown', e => {
-            if (e.code === 'Space') {
-                coin.flap();
-            }
-        });
-
-        canvas.addEventListener('click', () => {
-            coin.flap();
-        });
-
-        document.getElementById('restart-btn').addEventListener('click', () => {
+            // Запуск
             resetGame();
-        });
-
-        resetGame();
+            requestAnimationFrame(gameLoop);
+        })();
     </script>
 </body>
 </html>
